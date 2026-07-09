@@ -10,11 +10,18 @@ import pyqtgraph as pg
 import numpy as np
 from PIL import Image
 
+# Coordenadas geográficas límites fijas para el mapa de Lima Metropolitana
 LON_MIN, LON_MAX = -77.16, -76.96
 LAT_MIN, LAT_MAX = -12.15, -11.95
 
 class MqttWorker(QThread):
-    msg_signal = pyqtSignal(dict)
+    """Hilo independiente de red. Se mantiene SIEMPRE conectado al Broker sin bloquear la UI"""
+    batch_signal = pyqtSignal(list)
+
+    def __init__(self):
+        super().__init__()
+        self.buffer = []
+        self.last_flush = time.time()
 
     def run(self):
         def on_message(client, userdata, msg):
@@ -22,79 +29,79 @@ class MqttWorker(QThread):
                 tiempo_llegada = time.time()
                 data = json.loads(msg.payload.decode())
                 data["tiempo_llegada"] = tiempo_llegada
-                self.msg_signal.emit(data)
+                self.buffer.append(data)
+                
+                # Despacho optimizado por lotes rápidos cada 50ms para prevenir retardos de latencia
+                if len(self.buffer) >= 20000 or (time.time() - self.last_flush) > 0.05:
+                    self.batch_signal.emit(self.buffer)
+                    self.buffer = []
+                    self.last_flush = time.time()
             except Exception:
                 pass
 
         client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+        client.max_inflight_messages_set(1000000)
+        client.max_queued_messages_set(1000000)
+        
         client.on_message = on_message
         client.connect("localhost", 1883, 60)
         client.subscribe("ciudad/sensores/medicion")
         client.loop_forever()
 
+    def purgar_cola_inmediata(self):
+        self.buffer = []
+        self.last_flush = time.time()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Monitoreo HPC - Control de Ciudad Inteligente con Mapa")
-        self.resize(1100, 750)
-
-        # Inicializar variables de estado (Centralizadas para poder resetearlas)
-        self.limpiar_tablero()
-
+        self.setWindowTitle("Monitoreo:")
+        self.resize(1150, 750)
+        
         main_layout = QHBoxLayout()
         panel_izquierdo = QWidget()
         layout_metricas = QVBoxLayout()
         
-        self.lbl_total_sensores = QLabel("Carga Esperada: Esperando ráfaga...")
-        self.lbl_mensajes_enviados = QLabel("Mensajes Enviados (C): 0")
-        self.lbl_mensajes_totales = QLabel("Mensajes Recibidos (Python): 0")
-        self.lbl_mensajes_perdidos = QLabel("Mensajes Perdidos: 0")
-        self.lbl_throughput = QLabel("Mensajes por Segundo: 0.00 msgs/s")
-        self.lbl_latencia = QLabel("Latencia Promedio: 0.00 ms")
-        self.lbl_activos = QLabel("Sensores Activos (Verdes): 0")
+        # Panel de 9 Métricas consolidadas con la nueva semántica de conexión
+        self.lbl_mensajes_recibidos = QLabel("Mensajes Recibidos (UI): 0")
+        self.lbl_throughput = QLabel("Mensajes por segundo: 0.00 msgs/s")
+        self.lbl_latencia = QLabel("Latencia promedio: 0.00 ms")
         self.lbl_cpu = QLabel("Uso de CPU: 0.0%")
-        self.lbl_memoria = QLabel("Uso de Memoria: 0.0%")
+        self.lbl_memoria = QLabel("Uso de memoria: 0.0%")
+        self.lbl_sensores_totales = QLabel("Número Total de Sensores: 0")
+        self.lbl_activos = QLabel("Sensores Activos: 0")
+        self.lbl_conectados = QLabel("Sensores conectados: 0")
+        self.lbl_desconectados = QLabel("Sensores desconectados: 0")
         
-        metricas_lista = [
-            self.lbl_total_sensores, self.lbl_mensajes_enviados, self.lbl_mensajes_totales, 
-            self.lbl_mensajes_perdidos, self.lbl_throughput, self.lbl_latencia, 
-            self.lbl_activos, self.lbl_cpu, self.lbl_memoria
+        metricas_lista = [            
+            self.lbl_mensajes_recibidos,
+            self.lbl_throughput,
+            self.lbl_latencia,
+            self.lbl_cpu,
+            self.lbl_memoria,
+            self.lbl_sensores_totales,
+            self.lbl_activos,
+            self.lbl_conectados,
+            self.lbl_desconectados
         ]
+        
         for lbl in metricas_lista:
-            lbl.setStyleSheet("font-size: 14px; font-weight: bold; padding: 4px; color: #333;")
+            lbl.setStyleSheet("font-size: 14px; font-weight: bold; padding: 6px; color: #333;")
             layout_metricas.addWidget(lbl)
             
-        # --- BOTÓN DE LIMPIEZA MANUAL ---
-        layout_metricas.addSpacing(20) # Espacio visual
+        layout_metricas.addSpacing(25)
         self.btn_limpiar = QPushButton("Limpiar datos")
-        self.btn_limpiar.setStyleSheet("""
-            QPushButton {
-                background-color: #595959;
-                color: white;
-                font-size: 13px;
-                font-weight: bold;
-                border-radius: 5px;
-                padding: 10px;
-            }
-            QPushButton:hover {
-                background-color: #c9302c;
-            }
-            QPushButton:pressed {
-                background-color: #ac2925;
-            }
-        """)
-        # Conectar el clic del botón a la función de reseteo
+        self.btn_limpiar.setStyleSheet("background-color: #595959; color: white; font-size: 13px; font-weight: bold; border-radius: 5px; padding: 10px;")
         self.btn_limpiar.clicked.connect(self.limpiar_tablero)
         layout_metricas.addWidget(self.btn_limpiar)
-        layout_metricas.addStretch() # Empuja todo hacia arriba
-            
+        layout_metricas.addStretch()
+        
         panel_izquierdo.setLayout(layout_metricas)
         main_layout.addWidget(panel_izquierdo, stretch=1)
-
-        # --- PANEL DERECHO (MAPA) ---
+        
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('k')
-        self.plot_widget.setTitle("Nube de Puntos sobre Mapa de la Ciudad", color="w", size="12pt")
+        self.plot_widget.setTitle("Distribución de Sensores", color="w", size="12pt")
         
         if os.path.exists("mapa_lima.png"):
             img = Image.open("mapa_lima.png").convert("RGBA")
@@ -104,134 +111,166 @@ class MainWindow(QMainWindow):
             rect = pg.QtCore.QRectF(LON_MIN, LAT_MIN, LON_MAX - LON_MIN, LAT_MAX - LAT_MIN)
             img_item.setRect(rect)
             self.plot_widget.addItem(img_item)
-            self.plot_widget.setXRange(LON_MIN, LON_MAX)
-            self.plot_widget.setYRange(LAT_MIN, LAT_MAX)
+            
+        self.plot_widget.setXRange(LON_MIN, LON_MAX)
+        self.plot_widget.setYRange(LAT_MIN, LAT_MAX)
         
-        self.scatter = pg.ScatterPlotItem(size=8)
+        self.scatter = pg.ScatterPlotItem(size=3, symbol='s', pen=None)
         self.plot_widget.addItem(self.scatter)
         main_layout.addWidget(self.plot_widget, stretch=3)
-
+        
         container = QWidget()
         container.setLayout(main_layout)
         self.setCentralWidget(container)
-
+        
+        # Umbrales temporales de la máquina de estados
+        self.tiempo_vida_verde = 2.0  # Menos de 2 segundos desde su mensaje = ACTIVO (Verde)
+        self.tiempo_vida_gris = 5.0   # Entre 2 y 5 segundos = CONECTADO PASIVO (Gris)
+                                      # Más de 5 segundos = DESCONECTADO (No se pinta)
+        
+        self.inicializar_variables_sistema()
         self.worker = MqttWorker()
-        self.worker.msg_signal.connect(self.procesar_mensaje)
+        self.worker.batch_signal.connect(self.procesar_bloque_mensajes)
         self.worker.start()
-
+        
         self.timer = QTimer()
         self.timer.timeout.connect(self.actualizar_interfaz)
-        self.timer.start(100)
+        self.timer.start(50)
 
-    def limpiar_tablero(self):
-        """ Restablece todas las métricas y estructuras de datos a cero """
+    def inicializar_variables_sistema(self):
         self.total_mensajes = 0
-        self.mensajes_enviados_simulador = 0
         self.tiempo_inicio = None
+        self.ultimo_mensaje_ts = None
         self.latencias = []
         self.base_sensores = {}
-        self.tiempo_vida_verde = 3.0
-        self.tiempo_vida_total = 5.0
-        print("[INTERFAZ] Tablero de control restablecido. Listo para nueva carga HPC.")
+        self.universo_total_configurado = 0
 
-    def procesar_mensaje(self, data):
-        # DETECCIÓN AUTOMÁTICA (Seguridad): Si llega una ráfaga nueva y el tablero tiene datos viejos completos, limpia solo
-        total_envio_actual = data.get("total_envio", 50000)
-        if self.mensajes_enviados_simulador > 0 and self.total_mensajes >= self.mensajes_enviados_simulador:
-            # Si entran datos nuevos habiendo terminado la simulación anterior, auto-reiniciar
-            self.limpiar_tablero()
+    def limpiar_tablero(self):
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.purgar_cola_inmediata()
+            
+        self.inicializar_variables_sistema()
+        self.scatter.clear()
+        
+        
+        self.lbl_mensajes_recibidos.setText("Mensajes Recibidos: 0")
+        self.lbl_throughput.setText("Mensajes por segundo: 0.00 msgs/s")
+        self.lbl_latencia.setText("Latencia promedio: 0.00 ms")
+        self.lbl_cpu.setText("Uso de CPU: 0.0%")
+        self.lbl_memoria.setText("Uso de memoria: 0.0%")
+        self.lbl_sensores_totales.setText("Número Total de Sensores: 0")
+        self.lbl_activos.setText("Sensores Activos: 0")
+        self.lbl_conectados.setText("Sensores conectados: 0")
+        self.lbl_desconectados.setText("Sensores desconectados: 0")
 
+    def procesar_bloque_mensajes(self, lista_datos):
+        if not lista_datos:
+            return
+            
         if self.tiempo_inicio is None:
             self.tiempo_inicio = time.time()
-            
-        self.total_mensajes += 1
+
+        ahora = time.time()
+        self.ultimo_mensaje_ts = ahora
         
-        self.mensajes_enviados_simulador = total_envio_actual
-        intervalo = data.get("intervalo", 5)
+        actualizaciones_locales = {}
+        nuevas_latencias = []
         
-        self.tiempo_vida_verde = float(intervalo)
-        self.tiempo_vida_total = self.tiempo_vida_verde + 2.0
+        for item in lista_datos:
+            self.total_mensajes += 1
+            try:
+                data = item
+                sensor_id = data.get("sensor_id")
+                if sensor_id:
+                    actualizaciones_locales[sensor_id] = {
+                        "pos": (data.get("x", 0), data.get("y", 0)),
+                        "last_seen": ahora
+                    }
+                    
+                ts_simulador = data.get("timestamp")
+                ts_llegada = data.get("tiempo_llegada")
+                if ts_simulador and ts_llegada:
+                    latencia = (ts_llegada - float(ts_simulador)) * 1000
+                    if 0 <= latencia < 5000:
+                        nuevas_latencias.append(latencia)
+            except Exception:
+                pass
+
+        if actualizaciones_locales:
+            self.base_sensores.update(actualizaciones_locales)
         
-        sensor_id = data.get("id")
-        lat = data.get("lat")
-        lon = data.get("lon")
-        ts_simulador = data.get("timestamp")
-        ts_llegada = data.get("tiempo_llegada")
+        self.universo_total_configurado = max(self.universo_total_configurado, len(self.base_sensores))
         
-        if sensor_id and lat and lon:
-            self.base_sensores[sensor_id] = {
-                "pos": (lon, lat),
-                "last_seen": time.time()
-            }
-            
-            if ts_simulador:
-                latencia = (ts_llegada - float(ts_simulador)) * 1000
-                if 0 <= latencia < 10000:
-                    self.latencias.append(latencia)
-                    if len(self.latencias) > 500:
-                        self.latencias.pop(0)
+        if nuevas_latencias:
+            self.latencias.extend(nuevas_latencias)
+            if len(self.latencias) > 10000:
+                self.latencias = self.latencias[-10000:]
 
     def actualizar_interfaz(self):
         ahora = time.time()
         
-        if self.tiempo_inicio:
+        self.lbl_cpu.setText(f"Uso de CPU: {psutil.cpu_percent()}%")
+        self.lbl_memoria.setText(f"Uso de memoria: {psutil.virtual_memory().percent}%")
+        
+        if self.tiempo_inicio is None:
+            return
+            
+        if self.ultimo_mensaje_ts and (ahora - self.ultimo_mensaje_ts) > 2.0:
+            throughput = 0.00
+        else:
             duracion = ahora - self.tiempo_inicio
             throughput = self.total_mensajes / duracion if duracion > 0 else 0
-        else:
-            throughput = 0
-            
+        
         latencia_prom = np.mean(self.latencias) if self.latencias else 0.0
         
-        sensores_activos_verdes = 0
-        x_coords = []
-        y_coords = []
-        colores = []
-        sensores_a_eliminar = []
-
+        sensores_activos = 0
+        sensores_conectados = 0
+        lons, lats, colores = [], [], []
+        
+        # Evaluación temporal rigurosa por cada sensor conocido
         for s_id, info in list(self.base_sensores.items()):
             tiempo_transcurrido = ahora - info["last_seen"]
-            if tiempo_transcurrido >= self.tiempo_vida_total:
-                sensores_a_eliminar.append(s_id)
-                continue
-                
-            lon, lat = info["pos"]
-            x_coords.append(lon)
-            y_coords.append(lat)
             
+            # ESTADO 1: Verde (Activo y Conectado)
             if tiempo_transcurrido < self.tiempo_vida_verde:
-                sensores_activos_verdes += 1
-                colores.append(pg.mkBrush(0, 255, 0, 255))
-            else:
-                colores.append(pg.mkBrush(128, 128, 128, 140))
-
-        for s_id in sensores_a_eliminar:
-            del self.base_sensores[s_id]
-
-        perdidos = max(0, self.mensajes_enviados_simulador - self.total_mensajes) if self.mensajes_enviados_simulador > 0 else 0
-
-        # Si el tablero está vacío (recién limpiado), mostrar textos iniciales limpios
-        if self.mensajes_enviados_simulador == 0:
-            self.lbl_total_sensores.setText("Carga Esperada: Esperando ráfaga...")
-            self.lbl_mensajes_enviados.setText("Mensajes Enviados (C): 0")
-            self.lbl_mensajes_totales.setText("Mensajes Recibidos (Python): 0")
-            self.lbl_mensajes_perdidos.setText("Mensajes Perdidos: 0")
-            self.lbl_throughput.setText("Mensajes por Segundo: 0.00 msgs/s")
-            self.lbl_latencia.setText("Latencia Promedio: 0.00 ms")
-            self.lbl_activos.setText("Sensores Activos (Verdes): 0")
-        else:
-            self.lbl_total_sensores.setText(f"Carga Esperada: {self.mensajes_enviados_simulador} sensores")
-            self.lbl_mensajes_enviados.setText(f"Mensajes Enviados (C): {self.mensajes_enviados_simulador}")
-            self.lbl_mensajes_totales.setText(f"Mensajes Recibidos (Python): {self.total_mensajes}")
-            self.lbl_mensajes_perdidos.setText(f"Mensajes Perdidos: {perdidos}")
-            self.lbl_throughput.setText(f"Mensajes por Segundo: {throughput:.2f} msgs/s")
-            self.lbl_latencia.setText(f"Latencia Promedio: {latencia_prom:.2f} ms")
-            self.lbl_activos.setText(f"Sensores Activos (Verdes): {sensores_activos_verdes}")
+                sensores_activos += 1
+                sensores_conectados += 1
+                lon_val, lat_val = info["pos"]
+                lons.append(lon_val)
+                lats.append(lat_val)
+                colores.append((0, 255, 0, 255)) 
+                
+            # ESTADO 2: Gris (Pasivo pero SIGUE CONECTADO)
+            elif tiempo_transcurrido < self.tiempo_vida_gris:
+                sensores_conectados += 1 # Cuenta como conectado según la regla técnica
+                lon_val, lat_val = info["pos"]
+                lons.append(lon_val)
+                lats.append(lat_val)
+                colores.append((128, 128, 128, 140)) 
+                
+            # ESTADO 3: Desconectado total (No entra en los contadores y desaparece del mapa)
+            # Al no hacer lons.append ni lats.append, el punto se borra visualmente.
         
-        self.lbl_cpu.setText(f"Uso de CPU: {psutil.cpu_percent()}%")
-        self.lbl_memoria.setText(f"Uso de Memoria: {psutil.virtual_memory().percent}%")
+        totales_universo = max(self.universo_total_configurado, len(self.base_sensores))
+        
+        # El remanente que superó los 5 segundos se calcula como desconectado
+        sensores_desconectados = totales_universo - sensores_conectados
 
-        if x_coords:
-            self.scatter.setData(x=x_coords, y=y_coords, brush=colores)
+        # Pintar las métricas con su nueva relación matemática lógica
+        
+        self.lbl_mensajes_recibidos.setText(f"Mensajes Recibidos: {self.total_mensajes}")
+        self.lbl_throughput.setText(f"Mensajes por segundo: {throughput:.2f} msgs/s")
+        self.lbl_latencia.setText(f"Latencia promedio: {latencia_prom:.2f} ms")
+        self.lbl_sensores_totales.setText(f"Número Total de Sensores: {totales_universo}")
+        self.lbl_activos.setText(f"Sensores Activos: {sensores_activos}")
+        self.lbl_conectados.setText(f"Sensores conectados: {sensores_conectados}")
+        self.lbl_desconectados.setText(f"Sensores desconectados: {sensores_desconectados}")
+        
+        if lons and lats:
+            np_x = np.array(lons, dtype=float)
+            np_y = np.array(lats, dtype=float)
+            brushes = [pg.mkBrush(*c) for c in colores]
+            self.scatter.setData(x=np_x, y=np_y, brush=brushes)
         else:
             self.scatter.clear()
 
