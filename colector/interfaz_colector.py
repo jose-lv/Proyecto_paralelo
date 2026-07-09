@@ -246,7 +246,7 @@ class MainWindow(QMainWindow):
                 lon_val, lat_val = info["pos"]
                 lons.append(lon_val)
                 lats.append(lat_val)
-                colores.append((128, 128, 128, 140)) 
+                colores.append((168, 168, 168, 140)) 
                 
             # ESTADO 3: Desconectado total (No entra en los contadores y desaparece del mapa)
             # Al no hacer lons.append ni lats.append, el punto se borra visualmente.
