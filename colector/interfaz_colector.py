@@ -15,7 +15,7 @@ LON_MIN, LON_MAX = -77.16, -76.96
 LAT_MIN, LAT_MAX = -12.15, -11.95
 
 class MqttWorker(QThread):
-    """Hilo independiente de red. Se mantiene SIEMPRE conectado al Broker sin bloquear la UI"""
+    
     batch_signal = pyqtSignal(list)
 
     def __init__(self):
@@ -31,7 +31,7 @@ class MqttWorker(QThread):
                 data["tiempo_llegada"] = tiempo_llegada
                 self.buffer.append(data)
                 
-                # Despacho optimizado por lotes rápidos cada 50ms para prevenir retardos de latencia
+                
                 if len(self.buffer) >= 20000 or (time.time() - self.last_flush) > 0.05:
                     self.batch_signal.emit(self.buffer)
                     self.buffer = []
@@ -39,7 +39,7 @@ class MqttWorker(QThread):
             except Exception:
                 pass
 
-        client = mqtt.Client(callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+        client = mqtt.Client(client_id="Interfaz_Monitoreo_Unico",clean_session=True,callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
         client.max_inflight_messages_set(1000000)
         client.max_queued_messages_set(1000000)
         
@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
         self.plot_widget.setXRange(LON_MIN, LON_MAX)
         self.plot_widget.setYRange(LAT_MIN, LAT_MAX)
         
-        self.scatter = pg.ScatterPlotItem(size=3, symbol='s', pen=None)
+        self.scatter = pg.ScatterPlotItem(size=4, symbol='s', pen=None)
         self.plot_widget.addItem(self.scatter)
         main_layout.addWidget(self.plot_widget, stretch=3)
         
@@ -124,9 +124,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
         
         # Umbrales temporales de la máquina de estados
-        self.tiempo_vida_verde = 2.0  # Menos de 2 segundos desde su mensaje = ACTIVO (Verde)
-        self.tiempo_vida_gris = 5.0   # Entre 2 y 5 segundos = CONECTADO PASIVO (Gris)
-                                      # Más de 5 segundos = DESCONECTADO (No se pinta)
+        self.tiempo_vida_verde = 2.0  
+        self.tiempo_vida_gris = 5.0   
         
         self.inicializar_variables_sistema()
         self.worker = MqttWorker()
@@ -227,11 +226,10 @@ class MainWindow(QMainWindow):
         sensores_conectados = 0
         lons, lats, colores = [], [], []
         
-        # Evaluación temporal rigurosa por cada sensor conocido
+        
         for s_id, info in list(self.base_sensores.items()):
             tiempo_transcurrido = ahora - info["last_seen"]
             
-            # ESTADO 1: Verde (Activo y Conectado)
             if tiempo_transcurrido < self.tiempo_vida_verde:
                 sensores_activos += 1
                 sensores_conectados += 1
@@ -240,23 +238,21 @@ class MainWindow(QMainWindow):
                 lats.append(lat_val)
                 colores.append((0, 255, 0, 255)) 
                 
-            # ESTADO 2: Gris (Pasivo pero SIGUE CONECTADO)
+            
             elif tiempo_transcurrido < self.tiempo_vida_gris:
-                sensores_conectados += 1 # Cuenta como conectado según la regla técnica
+                sensores_conectados += 1 
                 lon_val, lat_val = info["pos"]
                 lons.append(lon_val)
                 lats.append(lat_val)
                 colores.append((168, 168, 168, 140)) 
                 
-            # ESTADO 3: Desconectado total (No entra en los contadores y desaparece del mapa)
-            # Al no hacer lons.append ni lats.append, el punto se borra visualmente.
+            
         
         totales_universo = max(self.universo_total_configurado, len(self.base_sensores))
         
-        # El remanente que superó los 5 segundos se calcula como desconectado
+       
         sensores_desconectados = totales_universo - sensores_conectados
 
-        # Pintar las métricas con su nueva relación matemática lógica
         
         self.lbl_mensajes_recibidos.setText(f"Mensajes Recibidos: {self.total_mensajes}")
         self.lbl_throughput.setText(f"Mensajes por segundo: {throughput:.2f} msgs/s")
