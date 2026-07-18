@@ -40,7 +40,7 @@ class MqttWorker(QThread):
         def on_connect(client, userdata, flags, reason_code, properties=None):
             self.connection_signal.emit(True)
 
-        def on_disconnect(client, userdata, reason_code, properties=None):
+        def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
             # CAMBIO: antes no había ningún aviso visible si el broker se
             # caía o se reiniciaba (p. ej. al aplicar un mosquitto.conf
             # nuevo). El dashboard seguía mostrando el último throughput

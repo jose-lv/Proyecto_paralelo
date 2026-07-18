@@ -112,8 +112,8 @@ int main(int argc, char* argv[]) {
                 double humidity = 60.0 + (rand_r(&semilla_hilo) % 300) / 10.0;
 
                 char json_payload[320];
-                sprintf(json_payload, "{\"sensor_id\": \"S-%06d\", \"x\": %.5f, \"y\": %.5f, \"temperature\": %.1f, \"humidity\": %.1f, \"timestamp\": %.4f, \"intervalo\": %d, \"total_envio\": %d}",
-                        i, lon, lat, temperature, humidity, (double)time(NULL), intervalo_configurado, total_sensores);
+                sprintf(json_payload, "{\"sensor_id\": \"S-%06d\", \"x\": %.5f, \"y\": %.5f, \"temperature\": %.1f, \"humidity\": %.1f, \"timestamp\": %.4f, \"intervalo\": %d, \"total_envio\": %d, \"rafaga\": %d}",
+                        i, lon, lat, temperature, humidity, (double)time(NULL), intervalo_configurado, total_sensores, nro_rafaga);
 
                 MQTTClient_message pubmsg = MQTTClient_message_initializer;
                 pubmsg.payload = json_payload;
