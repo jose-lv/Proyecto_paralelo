@@ -140,13 +140,10 @@ class MainWindow(QMainWindow):
 
         # ── RÁFAGAS ──
         layout_metricas.addWidget(seccion("━━━ RÁFAGAS ━━━"))
-        self.lbl_rafaga = QLabel("Ráfaga #0: 0/0 (recibiendo...)")
-        self.lbl_ultima_rafaga = QLabel("Última ráfaga: —")
-        self.lbl_esperados = QLabel("Mensajes esperados: 0")
-        self.lbl_recibidos_rafaga = QLabel("Mensajes recibidos: 0")
-        self.lbl_duracion = QLabel("Duración: 0.0000 s")
-        self.lbl_perdida = QLabel("Pérdida: N/D")
-        for lbl in (self.lbl_rafaga, self.lbl_ultima_rafaga, self.lbl_esperados, self.lbl_recibidos_rafaga, self.lbl_duracion, self.lbl_perdida):
+        self.lbl_rafaga = QLabel("Ráfaga #0 (—)")
+        self.lbl_total_esperado = QLabel("Total esperado: 0")
+        self.lbl_perdida = QLabel("Pérdida global: N/D")
+        for lbl in (self.lbl_rafaga, self.lbl_total_esperado, self.lbl_perdida):
             lbl.setStyleSheet(estilo_label)
             layout_metricas.addWidget(lbl)
 
@@ -243,11 +240,9 @@ class MainWindow(QMainWindow):
         self.lbl_sensores_totales.setText("Sensores configurados: 0")
         self.lbl_activos.setText("Sensores activos: 0")
         self.lbl_inactivos.setText("Sensores inactivos: 0")
-        self.lbl_rafaga.setText("Ráfaga #0: 0/0 (recibiendo...)")
-        self.lbl_ultima_rafaga.setText("Última ráfaga: —")
-        self.lbl_esperados.setText("Mensajes esperados: 0")
-        self.lbl_recibidos_rafaga.setText("Mensajes recibidos: 0")
-        self.lbl_duracion.setText("Duración: 0.0000 s")
+        self.lbl_rafaga.setText("Ráfaga #0 (—)")
+        self.lbl_total_esperado.setText("Total esperado: 0")
+        self.lbl_perdida.setText("Pérdida global: N/D")
 
     def procesar_bloque_mensajes(self, lista_datos):
         if not lista_datos:
@@ -349,36 +344,23 @@ class MainWindow(QMainWindow):
 
         claves = sorted(self.mensajes_por_rafaga.keys())
 
-        # Rafaga en progreso (última en claves)
-        if len(self.mensajes_por_rafaga) >= 1:
+        # Ráfaga en progreso
+        if claves:
             actual = claves[-1]
             recibidos_actual = len(self.mensajes_por_rafaga[actual])
             estado = "completado" if recibidos_actual >= self.total_sensores_config else "recibiendo..."
-            self.lbl_rafaga.setText(
-                f"Ráfaga #{actual}: {fmt_int(recibidos_actual)}/{fmt_int(self.total_sensores_config)} ({estado})")
+            self.lbl_rafaga.setText(f"Ráfaga #{actual} ({estado})")
 
-        # Última ráfaga completa
-        if len(self.mensajes_por_rafaga) >= 2:
-            ultima = claves[-2]
-            self.lbl_ultima_rafaga.setText(f"Última ráfaga: #{ultima}")
-            timings = self.timestamps_por_rafaga.get(ultima)
-            if timings:
-                diff = timings["max"] - timings["min"]
-                self.lbl_duracion.setText(f"Duración: {diff:.4f} s")
-            recibidos = len(self.mensajes_por_rafaga[ultima])
-            self.lbl_esperados.setText(f"Mensajes esperados: {fmt_int(self.total_sensores_config)}")
-            self.lbl_recibidos_rafaga.setText(f"Mensajes recibidos: {fmt_int(recibidos)}")
-
-        # Pérdida: compara las dos últimas ráfagas completas
-        if len(self.mensajes_por_rafaga) >= 3:
-            rafaga_ref = claves[-3]
-            rafaga_actual = claves[-2]
-            sensores_ref = self.mensajes_por_rafaga[rafaga_ref]
-            sensores_actual = self.mensajes_por_rafaga[rafaga_actual]
-            perdidos = sensores_ref - sensores_actual
-            if sensores_ref:
-                perdida_pct = len(perdidos) / len(sensores_ref) * 100.0
-                self.lbl_perdida.setText(f"Pérdida: {fmt_float(perdida_pct, 1)} %")
+        # Pérdida global: (total_esperado - total_recibido) / total_esperado * 100
+        if self.rafaga_actual > 0 and self.total_sensores_config > 0:
+            total_esperado = self.rafaga_actual * self.total_sensores_config
+            self.lbl_total_esperado.setText(f"Total esperado: {fmt_int(total_esperado)}")
+            perdidos = total_esperado - self.total_mensajes
+            if perdidos > 0:
+                pct = perdidos / total_esperado * 100.0
+                self.lbl_perdida.setText(f"Pérdida global: {fmt_float(pct, 1)} %")
+            else:
+                self.lbl_perdida.setText("Pérdida global: 0.0 %")
 
         sensores_activos = 0
         sensores_conectados = 0
