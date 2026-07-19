@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.actualizar_interfaz)
-        self.timer.start(2000)
+        self.timer.start(1000)
 
     def inicializar_variables_sistema(self):
         self.total_mensajes = 0
