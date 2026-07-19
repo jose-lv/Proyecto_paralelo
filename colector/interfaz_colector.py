@@ -95,45 +95,52 @@ class MainWindow(QMainWindow):
         panel_izquierdo = QWidget()
         layout_metricas = QVBoxLayout()
 
+        estilo_seccion = "font-size: 11px; font-weight: bold; color: #888; padding: 10px 6px 2px 6px; border-bottom: 1px solid #ddd;"
+        estilo_label = "font-size: 14px; font-weight: bold; padding: 4px 6px; color: #333;"
+
+        def seccion(texto):
+            lbl = QLabel(texto)
+            lbl.setStyleSheet(estilo_seccion)
+            return lbl
+
+        # ── SISTEMA ──
+        layout_metricas.addWidget(seccion("SISTEMA"))
         self.lbl_conexion = QLabel("Broker: conectando...")
-        self.lbl_mensajes_recibidos = QLabel("Mensajes Recibidos (UI): 0")
-        self.lbl_throughput = QLabel(f"Mensajes por segundo (últimos {VENTANA_METRICAS_SEG:.0f}s): 0.00 msgs/s")
-        self.lbl_latencia = QLabel("Latencia promedio: 0.00 ms")
-        self.lbl_perdida = QLabel("Pérdida última ráfaga: N/D")
-        self.lbl_cpu = QLabel("Uso de CPU: 0.0%")
-        self.lbl_memoria = QLabel("Uso de memoria: 0.0%")
-        self.lbl_sensores_totales = QLabel("Número Total de Sensores: 0")
-        self.lbl_activos = QLabel("Sensores Activos: 0")
-        self.lbl_conectados = QLabel("Sensores conectados: 0")
-        self.lbl_desconectados = QLabel("Sensores desconectados: 0")
-        self.lbl_rafaga = QLabel("Ráfaga: — | Último mensaje: hace --s")
-        self.lbl_tiempo_rafaga = QLabel("Tiempo última ráfaga: -- s")
-        self.lbl_temp = QLabel("Temperatura: -- °C")
-        self.lbl_humedad = QLabel("Humedad: -- %")
-
-        metricas_lista = [
-            self.lbl_conexion,
-            self.lbl_mensajes_recibidos,
-            self.lbl_throughput,
-            self.lbl_latencia,
-            self.lbl_perdida,
-            self.lbl_cpu,
-            self.lbl_memoria,
-            self.lbl_sensores_totales,
-            self.lbl_activos,
-            self.lbl_conectados,
-            self.lbl_desconectados,
-            self.lbl_rafaga,
-            self.lbl_tiempo_rafaga,
-            self.lbl_temp,
-            self.lbl_humedad
-        ]
-
-        for lbl in metricas_lista:
-            lbl.setStyleSheet("font-size: 14px; font-weight: bold; padding: 6px; color: #333;")
+        self.lbl_cpu = QLabel("CPU: 0.0%")
+        self.lbl_memoria = QLabel("Memoria: 0.0%")
+        for lbl in (self.lbl_conexion, self.lbl_cpu, self.lbl_memoria):
+            lbl.setStyleSheet(estilo_label)
             layout_metricas.addWidget(lbl)
 
-        layout_metricas.addSpacing(25)
+        # ── MENSAJES ──
+        layout_metricas.addWidget(seccion("MENSAJES"))
+        self.lbl_mensajes_recibidos = QLabel("Recibidos: 0")
+        self.lbl_throughput = QLabel(f"A través (últimos {VENTANA_METRICAS_SEG:.0f}s): 0.00 msgs/s")
+        self.lbl_latencia = QLabel("Latencia promedio: 0.00 ms")
+        for lbl in (self.lbl_mensajes_recibidos, self.lbl_throughput, self.lbl_latencia):
+            lbl.setStyleSheet(estilo_label)
+            layout_metricas.addWidget(lbl)
+
+        # ── SENSORES ──
+        layout_metricas.addWidget(seccion("SENSORES"))
+        self.lbl_sensores_totales = QLabel("Totales configurados: 0")
+        self.lbl_activos = QLabel("Activos: 0")
+        self.lbl_conectados = QLabel("Conectados: 0  |  Desconectados: 0")
+        self.lbl_desconectados = None
+        for lbl in (self.lbl_sensores_totales, self.lbl_activos, self.lbl_conectados):
+            lbl.setStyleSheet(estilo_label)
+            layout_metricas.addWidget(lbl)
+
+        # ── RÁFAGAS ──
+        layout_metricas.addWidget(seccion("RÁFAGAS"))
+        self.lbl_rafaga = QLabel("Ráfaga: — | Último mensaje: hace --s")
+        self.lbl_tiempo_rafaga = QLabel("Tiempo ráfaga: -- s")
+        self.lbl_perdida = QLabel("Pérdida: N/D")
+        for lbl in (self.lbl_rafaga, self.lbl_tiempo_rafaga, self.lbl_perdida):
+            lbl.setStyleSheet(estilo_label)
+            layout_metricas.addWidget(lbl)
+
+        layout_metricas.addSpacing(20)
         self.btn_limpiar = QPushButton("Limpiar datos")
         self.btn_limpiar.setStyleSheet("background-color: #595959; color: white; font-size: 13px; font-weight: bold; border-radius: 5px; padding: 10px;")
         self.btn_limpiar.clicked.connect(self.limpiar_tablero)
@@ -201,13 +208,6 @@ class MainWindow(QMainWindow):
         self.rafaga_actual = 0
         self.intervalo_config = 0
         self.timestamps_por_rafaga = {}
-        self.clima_count = 0
-        self.clima_sum_temp = 0.0
-        self.clima_min_temp = float('inf')
-        self.clima_max_temp = float('-inf')
-        self.clima_sum_hum = 0.0
-        self.clima_min_hum = float('inf')
-        self.clima_max_hum = float('-inf')
 
     def actualizar_estado_conexion(self, conectado):
         if conectado:
@@ -224,21 +224,17 @@ class MainWindow(QMainWindow):
         self.inicializar_variables_sistema()
         self.scatter.clear()
 
-        self.lbl_mensajes_recibidos.setText("Mensajes Recibidos: 0")
-        self.lbl_sensores_totales.setText("Número Total de Sensores: 0")
-        self.lbl_throughput.setText(f"Mensajes por segundo (últimos {VENTANA_METRICAS_SEG:.0f}s): 0.00 msgs/s")
+        self.lbl_mensajes_recibidos.setText("Recibidos: 0")
+        self.lbl_throughput.setText(f"A través (últimos {VENTANA_METRICAS_SEG:.0f}s): 0.00 msgs/s")
         self.lbl_latencia.setText("Latencia promedio: 0.00 ms")
-        self.lbl_perdida.setText("Pérdida última ráfaga: N/D")
-        self.lbl_cpu.setText("Uso de CPU: 0.0%")
-        self.lbl_memoria.setText("Uso de memoria: 0.0%")
-        self.lbl_sensores_totales.setText("Número Total de Sensores: 0")
-        self.lbl_activos.setText("Sensores Activos: 0")
-        self.lbl_conectados.setText("Sensores conectados: 0")
-        self.lbl_desconectados.setText("Sensores desconectados: 0")
+        self.lbl_perdida.setText("Pérdida: N/D")
+        self.lbl_cpu.setText("CPU: 0.0%")
+        self.lbl_memoria.setText("Memoria: 0.0%")
+        self.lbl_sensores_totales.setText("Totales configurados: 0")
+        self.lbl_activos.setText("Activos: 0")
+        self.lbl_conectados.setText("Conectados: 0  |  Desconectados: 0")
         self.lbl_rafaga.setText("Ráfaga: — | Último mensaje: hace --s")
-        self.lbl_tiempo_rafaga.setText("Tiempo última ráfaga: -- s")
-        self.lbl_temp.setText("Temperatura: -- °C")
-        self.lbl_humedad.setText("Humedad: -- %")
+        self.lbl_tiempo_rafaga.setText("Tiempo ráfaga: -- s")
 
     def procesar_bloque_mensajes(self, lista_datos):
         if not lista_datos:
@@ -296,17 +292,6 @@ class MainWindow(QMainWindow):
                     if ts_float > entry["max"]:
                         entry["max"] = ts_float
 
-                temperature = data.get("temperature")
-                humidity = data.get("humidity")
-                if temperature is not None and humidity is not None:
-                    self.clima_count += 1
-                    tv = float(temperature); hv = float(humidity)
-                    self.clima_sum_temp += tv
-                    self.clima_min_temp = min(self.clima_min_temp, tv)
-                    self.clima_max_temp = max(self.clima_max_temp, tv)
-                    self.clima_sum_hum += hv
-                    self.clima_min_hum = min(self.clima_min_hum, hv)
-                    self.clima_max_hum = max(self.clima_max_hum, hv)
             except Exception:
                 pass
 
@@ -363,19 +348,6 @@ class MainWindow(QMainWindow):
                 diff = timings["max"] - timings["min"]
                 self.lbl_tiempo_rafaga.setText(f"Tiempo ráfaga #{ultima}: {diff:.4f}s")
 
-        if self.clima_count > 0:
-            tp = self.clima_sum_temp / self.clima_count
-            hp = self.clima_sum_hum / self.clima_count
-            self.lbl_temp.setText(f"Temperatura: {tp:.1f} °C ({self.clima_min_temp:.1f} – {self.clima_max_temp:.1f})")
-            self.lbl_humedad.setText(f"Humedad: {hp:.1f} % ({self.clima_min_hum:.1f} – {self.clima_max_hum:.1f})")
-            self.clima_count = 0
-            self.clima_sum_temp = 0.0
-            self.clima_min_temp = float('inf')
-            self.clima_max_temp = float('-inf')
-            self.clima_sum_hum = 0.0
-            self.clima_min_hum = float('inf')
-            self.clima_max_hum = float('-inf')
-
         if len(self.mensajes_por_rafaga) >= 3:
             claves = sorted(self.mensajes_por_rafaga.keys())
             rafaga_ref = claves[-3]
@@ -414,13 +386,12 @@ class MainWindow(QMainWindow):
         total_referencia = max(self.total_sensores_config, len(self.base_sensores))
         sensores_desconectados = total_referencia - sensores_conectados
 
-        self.lbl_mensajes_recibidos.setText(f"Mensajes Recibidos: {self.total_mensajes}")
-        self.lbl_throughput.setText(f"Mensajes por segundo (últimos {VENTANA_METRICAS_SEG:.0f}s): {throughput:.2f} msgs/s")
+        self.lbl_mensajes_recibidos.setText(f"Recibidos: {self.total_mensajes}")
+        self.lbl_throughput.setText(f"A través (últimos {VENTANA_METRICAS_SEG:.0f}s): {throughput:.2f} msgs/s")
         self.lbl_latencia.setText(f"Latencia promedio (últimos {VENTANA_METRICAS_SEG:.0f}s): {latencia_prom:.2f} ms")
-        self.lbl_sensores_totales.setText(f"Número Total de Sensores: {self.total_sensores_config}")
-        self.lbl_activos.setText(f"Sensores Activos: {sensores_activos}")
-        self.lbl_conectados.setText(f"Sensores conectados: {sensores_conectados}")
-        self.lbl_desconectados.setText(f"Sensores desconectados: {sensores_desconectados}")
+        self.lbl_sensores_totales.setText(f"Totales configurados: {self.total_sensores_config}")
+        self.lbl_activos.setText(f"Activos: {sensores_activos}")
+        self.lbl_conectados.setText(f"Conectados: {sensores_conectados}  |  Desconectados: {sensores_desconectados}")
 
         if lons and lats:
             np_x = np.array(lons, dtype=float)
