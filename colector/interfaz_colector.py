@@ -215,6 +215,10 @@ class MainWindow(QMainWindow):
         self.rafaga_actual = 0
         self.intervalo_config = 0
         self.timestamps_por_rafaga = {}
+        self.ids_faltantes_por_rafaga = {}
+        self.rafagas_cerradas = set()
+        self.total_sensores_por_rafaga = {}
+        self.ultimo_n_diag = 0
 
     def actualizar_estado_conexion(self, conectado):
         if conectado:
@@ -285,6 +289,8 @@ class MainWindow(QMainWindow):
                 total_envio = data.get("total_envio")
                 if total_envio is not None:
                     self.total_sensores_config = total_envio
+                    if rafaga is not None and rafaga not in self.total_sensores_por_rafaga:
+                        self.total_sensores_por_rafaga[rafaga] = total_envio
 
                 intervalo = data.get("intervalo")
                 if intervalo is not None:
@@ -317,6 +323,30 @@ class MainWindow(QMainWindow):
             viejos = sorted(self.timestamps_por_rafaga.keys())[:-30]
             for k in viejos:
                 del self.timestamps_por_rafaga[k]
+
+    def _loguear_faltantes(self, rafaga_id):
+        total_config = self.total_sensores_por_rafaga.get(
+            rafaga_id, self.total_sensores_config)
+        ids_esperados = {f"S-{i:06d}" for i in range(0, total_config)}
+        ids_recibidos = set(self.mensajes_por_rafaga[rafaga_id])
+        faltantes = ids_esperados - ids_recibidos
+
+        self.ids_faltantes_por_rafaga[rafaga_id] = faltantes
+        self.rafagas_cerradas.add(rafaga_id)
+
+        n = len(faltantes)
+        if n == 0:
+            print(f"[RAFAGA #{rafaga_id}] COMPLETA — 0 sensores faltantes")
+            return
+
+        primeros = sorted(faltantes)[:10]
+        resto = f" ... y {n - 10} más" if n > 10 else ""
+        print(f"[RAFAGA #{rafaga_id}] Faltaron {n} sensores: {', '.join(primeros)}{resto}")
+
+        os.makedirs("logs", exist_ok=True)
+        with open(f"logs/faltantes_rafaga_{rafaga_id}.txt", "w") as f:
+            for sid in sorted(faltantes):
+                f.write(f"{sid}\n")
 
     def actualizar_interfaz(self):
         ahora = time.time()
@@ -361,6 +391,38 @@ class MainWindow(QMainWindow):
                 self.lbl_perdida.setText(f"Pérdida global: {fmt_float(pct, 1)} %")
             else:
                 self.lbl_perdida.setText("Pérdida global: 0.0 %")
+
+        # Disparador 1: cambio de ráfaga → cerrar la anterior
+        if len(claves) >= 2:
+            completa = claves[-2]
+            if completa not in self.rafagas_cerradas:
+                self._loguear_faltantes(completa)
+
+        # Disparador 2: timeout en la última ráfaga (para que la final se cierre)
+        cerrar_ultima = (
+            self.ultimo_mensaje_ts
+            and (ahora - self.ultimo_mensaje_ts) > 5.0
+            and claves
+            and claves[-1] not in self.rafagas_cerradas
+        )
+        if cerrar_ultima:
+            self._loguear_faltantes(claves[-1])
+
+        # Diagnóstico de consistencia (una sola vez por cambio)
+        n_cerradas = len(self.ids_faltantes_por_rafaga)
+        if n_cerradas >= 2 and n_cerradas != self.ultimo_n_diag:
+            self.ultimo_n_diag = n_cerradas
+            conjuntos = list(self.ids_faltantes_por_rafaga.values())
+            siempre = conjuntos[0].copy()
+            alguna = set()
+            for s in conjuntos:
+                siempre &= s
+                alguna |= s
+            print(f"[DIAG] Tras {n_cerradas} rafagas:")
+            print(f"  IDs que siempre faltan: {len(siempre)}")
+            if siempre:
+                print(f"  Ejemplos: {sorted(siempre)[:10]}")
+            print(f"  IDs que faltaron ≥1 vez: {len(alguna)} únicos")
 
         sensores_activos = 0
         sensores_conectados = 0

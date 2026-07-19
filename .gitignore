@@ -2,3 +2,5 @@ venv/
 simulador/simulador
 simulador/simulador_hpc
 __pycache__/
+logs/
+logs/
