@@ -106,6 +106,10 @@ class MainWindow(QMainWindow):
         self.lbl_activos = QLabel("Sensores Activos: 0")
         self.lbl_conectados = QLabel("Sensores conectados: 0")
         self.lbl_desconectados = QLabel("Sensores desconectados: 0")
+        self.lbl_rafaga = QLabel("Ráfaga: — | Último mensaje: hace --s")
+        self.lbl_tiempo_rafaga = QLabel("Tiempo última ráfaga: -- s")
+        self.lbl_temp = QLabel("Temperatura: -- °C")
+        self.lbl_humedad = QLabel("Humedad: -- %")
 
         metricas_lista = [
             self.lbl_conexion,
@@ -118,7 +122,11 @@ class MainWindow(QMainWindow):
             self.lbl_sensores_totales,
             self.lbl_activos,
             self.lbl_conectados,
-            self.lbl_desconectados
+            self.lbl_desconectados,
+            self.lbl_rafaga,
+            self.lbl_tiempo_rafaga,
+            self.lbl_temp,
+            self.lbl_humedad
         ]
 
         for lbl in metricas_lista:
@@ -170,15 +178,14 @@ class MainWindow(QMainWindow):
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.actualizar_interfaz)
-        self.timer.start(1000)
+        self.timer.start(2000)
 
     def inicializar_variables_sistema(self):
         self.total_mensajes = 0
         self.tiempo_inicio = None
         self.ultimo_mensaje_ts = None
-        self.latencias = []
         self.base_sensores = {}
-        self.universo_total_configurado = 0
+        self.total_sensores_config = 0
 
         # CAMBIO: eventos con marca de tiempo para calcular throughput/latencia
         # sobre una ventana deslizante (últimos VENTANA_METRICAS_SEG segundos)
@@ -191,6 +198,16 @@ class MainWindow(QMainWindow):
         # contador de mensajes recibidos sin punto de referencia.
         self.mensajes_por_rafaga = {}
         self.ultima_rafaga_reportada = None
+        self.rafaga_actual = 0
+        self.intervalo_config = 0
+        self.timestamps_por_rafaga = {}
+        self.clima_count = 0
+        self.clima_sum_temp = 0.0
+        self.clima_min_temp = float('inf')
+        self.clima_max_temp = float('-inf')
+        self.clima_sum_hum = 0.0
+        self.clima_min_hum = float('inf')
+        self.clima_max_hum = float('-inf')
 
     def actualizar_estado_conexion(self, conectado):
         if conectado:
@@ -208,6 +225,7 @@ class MainWindow(QMainWindow):
         self.scatter.clear()
 
         self.lbl_mensajes_recibidos.setText("Mensajes Recibidos: 0")
+        self.lbl_sensores_totales.setText("Número Total de Sensores: 0")
         self.lbl_throughput.setText(f"Mensajes por segundo (últimos {VENTANA_METRICAS_SEG:.0f}s): 0.00 msgs/s")
         self.lbl_latencia.setText("Latencia promedio: 0.00 ms")
         self.lbl_perdida.setText("Pérdida última ráfaga: N/D")
@@ -217,6 +235,10 @@ class MainWindow(QMainWindow):
         self.lbl_activos.setText("Sensores Activos: 0")
         self.lbl_conectados.setText("Sensores conectados: 0")
         self.lbl_desconectados.setText("Sensores desconectados: 0")
+        self.lbl_rafaga.setText("Ráfaga: — | Último mensaje: hace --s")
+        self.lbl_tiempo_rafaga.setText("Tiempo última ráfaga: -- s")
+        self.lbl_temp.setText("Temperatura: -- °C")
+        self.lbl_humedad.setText("Humedad: -- %")
 
     def procesar_bloque_mensajes(self, lista_datos):
         if not lista_datos:
@@ -251,21 +273,45 @@ class MainWindow(QMainWindow):
 
                 self.eventos_recientes.append((ahora, latencia))
 
-                # CAMBIO: conteo por ráfaga para calcular pérdida real.
                 rafaga = data.get("rafaga")
-                total_esperado = data.get("total_envio")
-                if rafaga is not None:
-                    entrada = self.mensajes_por_rafaga.setdefault(rafaga, {"recibidos": 0, "esperados": total_esperado})
-                    entrada["recibidos"] += 1
-                    if total_esperado is not None:
-                        entrada["esperados"] = total_esperado
+                sensor_id = data.get("sensor_id")
+                if rafaga is not None and sensor_id is not None:
+                    self.mensajes_por_rafaga.setdefault(rafaga, set()).add(sensor_id)
+
+                total_envio = data.get("total_envio")
+                if total_envio is not None:
+                    self.total_sensores_config = total_envio
+
+                intervalo = data.get("intervalo")
+                if intervalo is not None:
+                    self.intervalo_config = intervalo
+
+                timestamp = data.get("timestamp")
+                if rafaga is not None and timestamp is not None:
+                    ts_float = float(timestamp)
+                    self.rafaga_actual = max(self.rafaga_actual, rafaga)
+                    entry = self.timestamps_por_rafaga.setdefault(rafaga, {"min": ts_float, "max": ts_float})
+                    if ts_float < entry["min"]:
+                        entry["min"] = ts_float
+                    if ts_float > entry["max"]:
+                        entry["max"] = ts_float
+
+                temperature = data.get("temperature")
+                humidity = data.get("humidity")
+                if temperature is not None and humidity is not None:
+                    self.clima_count += 1
+                    tv = float(temperature); hv = float(humidity)
+                    self.clima_sum_temp += tv
+                    self.clima_min_temp = min(self.clima_min_temp, tv)
+                    self.clima_max_temp = max(self.clima_max_temp, tv)
+                    self.clima_sum_hum += hv
+                    self.clima_min_hum = min(self.clima_min_hum, hv)
+                    self.clima_max_hum = max(self.clima_max_hum, hv)
             except Exception:
                 pass
 
         if actualizaciones_locales:
             self.base_sensores.update(actualizaciones_locales)
-
-        self.universo_total_configurado = max(self.universo_total_configurado, len(self.base_sensores))
 
         # Poda de eventos y ráfagas viejas para no acumular memoria indefinidamente.
         limite = ahora - max(VENTANA_METRICAS_SEG * 4, 20.0)
@@ -274,6 +320,10 @@ class MainWindow(QMainWindow):
             claves_viejas = sorted(self.mensajes_por_rafaga.keys())[:-30]
             for k in claves_viejas:
                 del self.mensajes_por_rafaga[k]
+        if len(self.timestamps_por_rafaga) > 50:
+            viejos = sorted(self.timestamps_por_rafaga.keys())[:-30]
+            for k in viejos:
+                del self.timestamps_por_rafaga[k]
 
     def actualizar_interfaz(self):
         ahora = time.time()
@@ -299,22 +349,45 @@ class MainWindow(QMainWindow):
         latencias_ventana = [lat for (_, lat) in eventos_ventana if lat is not None]
         latencia_prom = np.mean(latencias_ventana) if latencias_ventana else 0.0
 
-        # CAMBIO: pérdida real de la última ráfaga completa reportada,
-        # comparando "recibidos" contra "esperados" (total_envio del payload).
-        # Antes esta información simplemente no existía en el dashboard.
-        if self.mensajes_por_rafaga:
-            claves_ordenadas = sorted(self.mensajes_por_rafaga.keys())
-            # Se ignora la última clave: puede seguir en curso, aún incompleta.
-            candidatas = claves_ordenadas[:-1] if len(claves_ordenadas) > 1 else claves_ordenadas
-            if candidatas:
-                ultima_clave = candidatas[-1]
-                info = self.mensajes_por_rafaga[ultima_clave]
-                esperados = info["esperados"]
-                recibidos = info["recibidos"]
-                if esperados:
-                    perdida_pct = max(0.0, (esperados - recibidos) / esperados * 100.0)
-                    self.lbl_perdida.setText(
-                        f"Pérdida ráfaga #{ultima_clave}: {perdida_pct:.2f}% ({recibidos}/{esperados})")
+        if self.ultimo_mensaje_ts:
+            diff = ahora - self.ultimo_mensaje_ts
+            self.lbl_rafaga.setText(f"Ráfaga: #{self.rafaga_actual} | Último mensaje: hace {diff:.1f}s")
+        else:
+            self.lbl_rafaga.setText("Ráfaga: — | Último mensaje: hace --s")
+
+        if len(self.mensajes_por_rafaga) >= 2:
+            claves = sorted(self.mensajes_por_rafaga.keys())
+            ultima = claves[-2]
+            timings = self.timestamps_por_rafaga.get(ultima)
+            if timings:
+                diff = timings["max"] - timings["min"]
+                self.lbl_tiempo_rafaga.setText(f"Tiempo ráfaga #{ultima}: {diff:.4f}s")
+
+        if self.clima_count > 0:
+            tp = self.clima_sum_temp / self.clima_count
+            hp = self.clima_sum_hum / self.clima_count
+            self.lbl_temp.setText(f"Temperatura: {tp:.1f} °C ({self.clima_min_temp:.1f} – {self.clima_max_temp:.1f})")
+            self.lbl_humedad.setText(f"Humedad: {hp:.1f} % ({self.clima_min_hum:.1f} – {self.clima_max_hum:.1f})")
+            self.clima_count = 0
+            self.clima_sum_temp = 0.0
+            self.clima_min_temp = float('inf')
+            self.clima_max_temp = float('-inf')
+            self.clima_sum_hum = 0.0
+            self.clima_min_hum = float('inf')
+            self.clima_max_hum = float('-inf')
+
+        if len(self.mensajes_por_rafaga) >= 3:
+            claves = sorted(self.mensajes_por_rafaga.keys())
+            rafaga_ref = claves[-3]
+            rafaga_actual = claves[-2]
+            sensores_ref = self.mensajes_por_rafaga[rafaga_ref]
+            sensores_actual = self.mensajes_por_rafaga[rafaga_actual]
+            perdidos = sensores_ref - sensores_actual
+            if sensores_ref:
+                perdida_pct = len(perdidos) / len(sensores_ref) * 100.0
+                self.lbl_perdida.setText(
+                    f"Pérdida ráfaga #{rafaga_actual} vs #{rafaga_ref}: "
+                    f"{perdida_pct:.2f}% ({len(perdidos)}/{len(sensores_ref)})")
 
         sensores_activos = 0
         sensores_conectados = 0
@@ -338,13 +411,13 @@ class MainWindow(QMainWindow):
                 lats.append(lat_val)
                 colores.append((168, 168, 168, 140))
 
-        totales_universo = max(self.universo_total_configurado, len(self.base_sensores))
-        sensores_desconectados = totales_universo - sensores_conectados
+        total_referencia = max(self.total_sensores_config, len(self.base_sensores))
+        sensores_desconectados = total_referencia - sensores_conectados
 
         self.lbl_mensajes_recibidos.setText(f"Mensajes Recibidos: {self.total_mensajes}")
         self.lbl_throughput.setText(f"Mensajes por segundo (últimos {VENTANA_METRICAS_SEG:.0f}s): {throughput:.2f} msgs/s")
         self.lbl_latencia.setText(f"Latencia promedio (últimos {VENTANA_METRICAS_SEG:.0f}s): {latencia_prom:.2f} ms")
-        self.lbl_sensores_totales.setText(f"Número Total de Sensores: {totales_universo}")
+        self.lbl_sensores_totales.setText(f"Número Total de Sensores: {self.total_sensores_config}")
         self.lbl_activos.setText(f"Sensores Activos: {sensores_activos}")
         self.lbl_conectados.setText(f"Sensores conectados: {sensores_conectados}")
         self.lbl_desconectados.setText(f"Sensores desconectados: {sensores_desconectados}")
