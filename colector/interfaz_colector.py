@@ -140,7 +140,7 @@ class MainWindow(QMainWindow):
 
         # ── RÁFAGAS ──
         layout_metricas.addWidget(seccion("━━━ RÁFAGAS ━━━"))
-        self.lbl_rafaga = QLabel("Ráfaga en progreso: #0 (0/0)")
+        self.lbl_rafaga = QLabel("Ráfaga #0: 0/0 (recibiendo...)")
         self.lbl_ultima_rafaga = QLabel("Última ráfaga: —")
         self.lbl_esperados = QLabel("Mensajes esperados: 0")
         self.lbl_recibidos_rafaga = QLabel("Mensajes recibidos: 0")
@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
         self.lbl_sensores_totales.setText("Sensores configurados: 0")
         self.lbl_activos.setText("Sensores activos: 0")
         self.lbl_inactivos.setText("Sensores inactivos: 0")
-        self.lbl_rafaga.setText("Ráfaga en progreso: #0 (0/0)")
+        self.lbl_rafaga.setText("Ráfaga #0: 0/0 (recibiendo...)")
         self.lbl_ultima_rafaga.setText("Última ráfaga: —")
         self.lbl_esperados.setText("Mensajes esperados: 0")
         self.lbl_recibidos_rafaga.setText("Mensajes recibidos: 0")
@@ -349,12 +349,13 @@ class MainWindow(QMainWindow):
 
         claves = sorted(self.mensajes_por_rafaga.keys())
 
-        # Rafaga en progreso (última en claves, aún recibiendo)
+        # Rafaga en progreso (última en claves)
         if len(self.mensajes_por_rafaga) >= 1:
             actual = claves[-1]
             recibidos_actual = len(self.mensajes_por_rafaga[actual])
+            estado = "completado" if recibidos_actual >= self.total_sensores_config else "recibiendo..."
             self.lbl_rafaga.setText(
-                f"Ráfaga en progreso: #{actual} ({fmt_int(recibidos_actual)}/{fmt_int(self.total_sensores_config)})")
+                f"Ráfaga #{actual}: {fmt_int(recibidos_actual)}/{fmt_int(self.total_sensores_config)} ({estado})")
 
         # Última ráfaga completa
         if len(self.mensajes_por_rafaga) >= 2:
