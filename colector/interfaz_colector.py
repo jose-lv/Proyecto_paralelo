@@ -22,6 +22,14 @@ LAT_MIN, LAT_MAX = -12.15, -11.95
 VENTANA_METRICAS_SEG = 5.0
 
 
+def fmt_int(n):
+    return f"{n:,}".replace(",", " ")
+
+
+def fmt_float(f, decimals):
+    return f"{f:,.{decimals}f}".replace(",", " ")
+
+
 class MqttWorker(QThread):
 
     batch_signal = pyqtSignal(list)
@@ -103,40 +111,42 @@ class MainWindow(QMainWindow):
             lbl.setStyleSheet(estilo_seccion)
             return lbl
 
-        # ── SISTEMA ──
-        layout_metricas.addWidget(seccion("SISTEMA"))
-        self.lbl_conexion = QLabel("Broker: conectando...")
-        self.lbl_cpu = QLabel("CPU: 0.0%")
-        self.lbl_memoria = QLabel("Memoria: 0.0%")
+        # ── ESTADO DEL SISTEMA ──
+        layout_metricas.addWidget(seccion("━━━ ESTADO DEL SISTEMA ━━━"))
+        self.lbl_conexion = QLabel("Broker MQTT: conectando...")
+        self.lbl_cpu = QLabel("CPU Colector: 0.0 %")
+        self.lbl_memoria = QLabel("Memoria Colector: 0.0 %")
         for lbl in (self.lbl_conexion, self.lbl_cpu, self.lbl_memoria):
             lbl.setStyleSheet(estilo_label)
             layout_metricas.addWidget(lbl)
 
-        # ── MENSAJES ──
-        layout_metricas.addWidget(seccion("MENSAJES"))
-        self.lbl_mensajes_recibidos = QLabel("Recibidos: 0")
-        self.lbl_throughput = QLabel(f"A través (últimos {VENTANA_METRICAS_SEG:.0f}s): 0.00 msgs/s")
-        self.lbl_latencia = QLabel("Latencia promedio: 0.00 ms")
+        # ── RENDIMIENTO MQTT ──
+        layout_metricas.addWidget(seccion("━━━ RENDIMIENTO MQTT ━━━"))
+        self.lbl_mensajes_recibidos = QLabel("Mensajes recibidos: 0")
+        self.lbl_throughput = QLabel("Throughput: 0.0 msgs/s")
+        self.lbl_latencia = QLabel("Latencia promedio: 0.0 ms")
         for lbl in (self.lbl_mensajes_recibidos, self.lbl_throughput, self.lbl_latencia):
             lbl.setStyleSheet(estilo_label)
             layout_metricas.addWidget(lbl)
 
         # ── SENSORES ──
-        layout_metricas.addWidget(seccion("SENSORES"))
-        self.lbl_sensores_totales = QLabel("Totales configurados: 0")
-        self.lbl_activos = QLabel("Activos: 0")
-        self.lbl_conectados = QLabel("Conectados: 0  |  Desconectados: 0")
-        self.lbl_desconectados = None
-        for lbl in (self.lbl_sensores_totales, self.lbl_activos, self.lbl_conectados):
+        layout_metricas.addWidget(seccion("━━━ SENSORES ━━━"))
+        self.lbl_sensores_totales = QLabel("Sensores configurados: 0")
+        self.lbl_activos = QLabel("Sensores activos: 0")
+        self.lbl_inactivos = QLabel("Sensores inactivos: 0")
+        for lbl in (self.lbl_sensores_totales, self.lbl_activos, self.lbl_inactivos):
             lbl.setStyleSheet(estilo_label)
             layout_metricas.addWidget(lbl)
 
         # ── RÁFAGAS ──
-        layout_metricas.addWidget(seccion("RÁFAGAS"))
-        self.lbl_rafaga = QLabel("Ráfaga: — | Último mensaje: hace --s")
-        self.lbl_tiempo_rafaga = QLabel("Tiempo ráfaga: -- s")
+        layout_metricas.addWidget(seccion("━━━ RÁFAGAS ━━━"))
+        self.lbl_rafaga = QLabel("Ráfaga en progreso: #0 (0/0)")
+        self.lbl_ultima_rafaga = QLabel("Última ráfaga: —")
+        self.lbl_esperados = QLabel("Mensajes esperados: 0")
+        self.lbl_recibidos_rafaga = QLabel("Mensajes recibidos: 0")
+        self.lbl_duracion = QLabel("Duración: 0.0000 s")
         self.lbl_perdida = QLabel("Pérdida: N/D")
-        for lbl in (self.lbl_rafaga, self.lbl_tiempo_rafaga, self.lbl_perdida):
+        for lbl in (self.lbl_rafaga, self.lbl_ultima_rafaga, self.lbl_esperados, self.lbl_recibidos_rafaga, self.lbl_duracion, self.lbl_perdida):
             lbl.setStyleSheet(estilo_label)
             layout_metricas.addWidget(lbl)
 
@@ -211,10 +221,10 @@ class MainWindow(QMainWindow):
 
     def actualizar_estado_conexion(self, conectado):
         if conectado:
-            self.lbl_conexion.setText("Broker: conectado")
+            self.lbl_conexion.setText("Broker MQTT: Conectado")
             self.lbl_conexion.setStyleSheet("font-size: 14px; font-weight: bold; padding: 6px; color: green;")
         else:
-            self.lbl_conexion.setText("Broker: DESCONECTADO")
+            self.lbl_conexion.setText("Broker MQTT: DESCONECTADO")
             self.lbl_conexion.setStyleSheet("font-size: 14px; font-weight: bold; padding: 6px; color: red;")
 
     def limpiar_tablero(self):
@@ -224,17 +234,20 @@ class MainWindow(QMainWindow):
         self.inicializar_variables_sistema()
         self.scatter.clear()
 
-        self.lbl_mensajes_recibidos.setText("Recibidos: 0")
-        self.lbl_throughput.setText(f"A través (últimos {VENTANA_METRICAS_SEG:.0f}s): 0.00 msgs/s")
-        self.lbl_latencia.setText("Latencia promedio: 0.00 ms")
+        self.lbl_mensajes_recibidos.setText("Mensajes recibidos: 0")
+        self.lbl_throughput.setText("Throughput: 0.0 msgs/s")
+        self.lbl_latencia.setText("Latencia promedio: 0.0 ms")
         self.lbl_perdida.setText("Pérdida: N/D")
-        self.lbl_cpu.setText("CPU: 0.0%")
-        self.lbl_memoria.setText("Memoria: 0.0%")
-        self.lbl_sensores_totales.setText("Totales configurados: 0")
-        self.lbl_activos.setText("Activos: 0")
-        self.lbl_conectados.setText("Conectados: 0  |  Desconectados: 0")
-        self.lbl_rafaga.setText("Ráfaga: — | Último mensaje: hace --s")
-        self.lbl_tiempo_rafaga.setText("Tiempo ráfaga: -- s")
+        self.lbl_cpu.setText("CPU Colector: 0.0 %")
+        self.lbl_memoria.setText("Memoria Colector: 0.0 %")
+        self.lbl_sensores_totales.setText("Sensores configurados: 0")
+        self.lbl_activos.setText("Sensores activos: 0")
+        self.lbl_inactivos.setText("Sensores inactivos: 0")
+        self.lbl_rafaga.setText("Ráfaga en progreso: #0 (0/0)")
+        self.lbl_ultima_rafaga.setText("Última ráfaga: —")
+        self.lbl_esperados.setText("Mensajes esperados: 0")
+        self.lbl_recibidos_rafaga.setText("Mensajes recibidos: 0")
+        self.lbl_duracion.setText("Duración: 0.0000 s")
 
     def procesar_bloque_mensajes(self, lista_datos):
         if not lista_datos:
@@ -313,8 +326,8 @@ class MainWindow(QMainWindow):
     def actualizar_interfaz(self):
         ahora = time.time()
 
-        self.lbl_cpu.setText(f"Uso de CPU: {psutil.cpu_percent()}%")
-        self.lbl_memoria.setText(f"Uso de memoria: {psutil.virtual_memory().percent}%")
+        self.lbl_cpu.setText(f"CPU Colector: {psutil.cpu_percent()} %")
+        self.lbl_memoria.setText(f"Memoria Colector: {psutil.virtual_memory().percent} %")
 
         if self.tiempo_inicio is None:
             return
@@ -326,7 +339,7 @@ class MainWindow(QMainWindow):
         limite_ventana = ahora - VENTANA_METRICAS_SEG
         eventos_ventana = [e for e in self.eventos_recientes if e[0] >= limite_ventana]
 
-        if self.ultimo_mensaje_ts and (ahora - self.ultimo_mensaje_ts) > 2.0:
+        if not eventos_ventana:
             throughput = 0.0
         else:
             throughput = len(eventos_ventana) / VENTANA_METRICAS_SEG
@@ -334,22 +347,29 @@ class MainWindow(QMainWindow):
         latencias_ventana = [lat for (_, lat) in eventos_ventana if lat is not None]
         latencia_prom = np.mean(latencias_ventana) if latencias_ventana else 0.0
 
-        if self.ultimo_mensaje_ts:
-            diff = ahora - self.ultimo_mensaje_ts
-            self.lbl_rafaga.setText(f"Ráfaga: #{self.rafaga_actual} | Último mensaje: hace {diff:.1f}s")
-        else:
-            self.lbl_rafaga.setText("Ráfaga: — | Último mensaje: hace --s")
+        claves = sorted(self.mensajes_por_rafaga.keys())
 
+        # Rafaga en progreso (última en claves, aún recibiendo)
+        if len(self.mensajes_por_rafaga) >= 1:
+            actual = claves[-1]
+            recibidos_actual = len(self.mensajes_por_rafaga[actual])
+            self.lbl_rafaga.setText(
+                f"Ráfaga en progreso: #{actual} ({fmt_int(recibidos_actual)}/{fmt_int(self.total_sensores_config)})")
+
+        # Última ráfaga completa
         if len(self.mensajes_por_rafaga) >= 2:
-            claves = sorted(self.mensajes_por_rafaga.keys())
             ultima = claves[-2]
+            self.lbl_ultima_rafaga.setText(f"Última ráfaga: #{ultima}")
             timings = self.timestamps_por_rafaga.get(ultima)
             if timings:
                 diff = timings["max"] - timings["min"]
-                self.lbl_tiempo_rafaga.setText(f"Tiempo ráfaga #{ultima}: {diff:.4f}s")
+                self.lbl_duracion.setText(f"Duración: {diff:.4f} s")
+            recibidos = len(self.mensajes_por_rafaga[ultima])
+            self.lbl_esperados.setText(f"Mensajes esperados: {fmt_int(self.total_sensores_config)}")
+            self.lbl_recibidos_rafaga.setText(f"Mensajes recibidos: {fmt_int(recibidos)}")
 
+        # Pérdida: compara las dos últimas ráfagas completas
         if len(self.mensajes_por_rafaga) >= 3:
-            claves = sorted(self.mensajes_por_rafaga.keys())
             rafaga_ref = claves[-3]
             rafaga_actual = claves[-2]
             sensores_ref = self.mensajes_por_rafaga[rafaga_ref]
@@ -357,9 +377,7 @@ class MainWindow(QMainWindow):
             perdidos = sensores_ref - sensores_actual
             if sensores_ref:
                 perdida_pct = len(perdidos) / len(sensores_ref) * 100.0
-                self.lbl_perdida.setText(
-                    f"Pérdida ráfaga #{rafaga_actual} vs #{rafaga_ref}: "
-                    f"{perdida_pct:.2f}% ({len(perdidos)}/{len(sensores_ref)})")
+                self.lbl_perdida.setText(f"Pérdida: {fmt_float(perdida_pct, 1)} %")
 
         sensores_activos = 0
         sensores_conectados = 0
@@ -386,12 +404,12 @@ class MainWindow(QMainWindow):
         total_referencia = max(self.total_sensores_config, len(self.base_sensores))
         sensores_desconectados = total_referencia - sensores_conectados
 
-        self.lbl_mensajes_recibidos.setText(f"Recibidos: {self.total_mensajes}")
-        self.lbl_throughput.setText(f"A través (últimos {VENTANA_METRICAS_SEG:.0f}s): {throughput:.2f} msgs/s")
-        self.lbl_latencia.setText(f"Latencia promedio (últimos {VENTANA_METRICAS_SEG:.0f}s): {latencia_prom:.2f} ms")
-        self.lbl_sensores_totales.setText(f"Totales configurados: {self.total_sensores_config}")
-        self.lbl_activos.setText(f"Activos: {sensores_activos}")
-        self.lbl_conectados.setText(f"Conectados: {sensores_conectados}  |  Desconectados: {sensores_desconectados}")
+        self.lbl_mensajes_recibidos.setText(f"Mensajes recibidos: {fmt_int(self.total_mensajes)}")
+        self.lbl_throughput.setText(f"Throughput: {fmt_float(throughput, 1)} msgs/s")
+        self.lbl_latencia.setText(f"Latencia promedio: {fmt_float(latencia_prom, 1)} ms")
+        self.lbl_sensores_totales.setText(f"Sensores configurados: {fmt_int(self.total_sensores_config)}")
+        self.lbl_activos.setText(f"Sensores activos: {fmt_int(sensores_activos)}")
+        self.lbl_inactivos.setText(f"Sensores inactivos: {fmt_int(sensores_desconectados)}")
 
         if lons and lats:
             np_x = np.array(lons, dtype=float)
