@@ -56,6 +56,9 @@ class MqttWorker(QThread):
             self.connection_signal.emit(False)
 
         def on_message(client, userdata, msg):
+            if msg.topic.startswith("$SYS/"):
+                print(f"[BROKER] {msg.topic}: {msg.payload.decode()}")
+                return
             try:
                 tiempo_llegada = time.time()
                 data = json.loads(msg.payload.decode())
@@ -85,6 +88,7 @@ class MqttWorker(QThread):
         client.on_message = on_message
         client.connect("localhost", 1883, 60)
         client.subscribe("ciudad/sensores/medicion")
+        client.subscribe("$SYS/broker/messages/dropped")
         client.loop_forever()
 
     def purgar_cola_inmediata(self):

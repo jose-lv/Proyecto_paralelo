@@ -100,7 +100,7 @@ int main(int argc, char* argv[]) {
             // Con "nowait" un hilo rápido podía re-entrar al `for` de la ráfaga N+1 mientras
             // otros hilos del mismo equipo seguían en la ráfaga N: eso rompe la construcción
             // de reparto de trabajo de OpenMP y produce publicaciones perdidas/mezcladas.
-            #pragma omp for
+            #pragma omp for schedule(dynamic, 100)
             for (int i = inicio_sensor; i <= fin_sensor; i++) {
                 // Generación de datos con rand_r
                 double offset_lat = ((rand_r(&semilla_hilo) % 10000) - 5000) / 50000.0;
@@ -150,6 +150,8 @@ int main(int argc, char* argv[]) {
 
                 // Reduce de tiempos (máximo = cuello de botella) y de mensajes fallidos (suma),
                 // uno por proceso MPI, tal como espera la operación colectiva.
+                printf("[Rank %d] Mensajes fallidos (publish): %ld\n", rank_id, mensajes_fallidos_proceso);
+                fflush(stdout);
                 MPI_Reduce(&tiempo_procesamiento_local, &tiempo_total_maximo, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
                 MPI_Reduce(&mensajes_fallidos_proceso, &fallidos_totales, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
 
