@@ -149,7 +149,6 @@ class MainWindow(QMainWindow):
 
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('k')
-        #self.plot_widget.setTitle("Distribución de Sensores", color="w", size="12pt")
 
         if os.path.exists("mapa_lima.png"):
             img = Image.open("mapa_lima.png").convert("RGBA")
@@ -380,18 +379,14 @@ class MainWindow(QMainWindow):
         self.lbl_activos.setText(f"Sensores activos (Verde): {fmt_int(sensores_activos)}")
         self.lbl_inactivos.setText(f"Sensores inactivos (Plomo): {fmt_int(sensores_inactivos)}")
         self.lbl_apagados.setText(f"Sensores apagados: {fmt_int(max(0, sensores_apagados))}")
-
-        # ── CAMBIO CLAVE AQUÍ: Corrección de redibujado en PyQtGraph ──
+        
         if lons and lats:
             np_x = np.array(lons, dtype=float)
             np_y = np.array(lats, dtype=float)
             brushes = [pg.mkBrush(*c) for c in colores]
             self.scatter.setData(x=np_x, y=np_y, brush=brushes)
         else:
-            # Forzar limpieza total si la lista queda vacía
-            self.scatter.clear()
-        
-        # Forzar explícitamente a Qt a repintar el área gráfica de inmediato
+            self.scatter.clear()        
         self.plot_widget.viewport().update()
 
 
