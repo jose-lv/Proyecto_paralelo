@@ -14,8 +14,6 @@ from PIL import Image
 # Coordenadas geográficas límites fijas para el mapa de Lima Metropolitana
 LON_MIN, LON_MAX = -77.16, -76.96
 LAT_MIN, LAT_MAX = -12.15, -11.95
-
-# Ventana deslizante para throughput/latencia
 VENTANA_METRICAS_SEG = 5.0
 
 
@@ -121,10 +119,11 @@ class MainWindow(QMainWindow):
         # ── SENSORES ──
         layout_metricas.addWidget(seccion("━━━ SENSORES ━━━"))
         self.lbl_sensores_totales = QLabel("Sensores configurados: 0")
+        self.lbl_conectados = QLabel("Sensores conectados: 0")
         self.lbl_activos = QLabel("Sensores activos: 0")
         self.lbl_inactivos = QLabel("Sensores inactivos: 0")
-        self.lbl_apagados = QLabel("Sensores apagados: 0")
-        for lbl in (self.lbl_sensores_totales, self.lbl_activos, self.lbl_inactivos, self.lbl_apagados):
+        self.lbl_apagados = QLabel("Sensores desconectados: 0")
+        for lbl in (self.lbl_sensores_totales, self.lbl_conectados, self.lbl_activos, self.lbl_inactivos, self.lbl_apagados):
             lbl.setStyleSheet(estilo_label)
             layout_metricas.addWidget(lbl)
 
@@ -223,9 +222,10 @@ class MainWindow(QMainWindow):
         self.lbl_cpu.setText("CPU Colector (Máx): 0.0 %")
         self.lbl_memoria.setText("Memoria Colector (Máx): 0.0 %")
         self.lbl_sensores_totales.setText("Sensores configurados: 0")
+        self.lbl_conectados.setText("Sensores conectados: 0")
         self.lbl_activos.setText("Sensores activos: 0")
         self.lbl_inactivos.setText("Sensores inactivos: 0")
-        self.lbl_apagados.setText("Sensores apagados: 0")
+        self.lbl_apagados.setText("Sensores desconectados: 0")
         self.lbl_rafaga.setText("Ráfaga #0 (—)")
         self.lbl_total_esperado.setText("Total esperado: 0")
         self.lbl_perdida.setText("Pérdida global: N/D")
@@ -371,14 +371,16 @@ class MainWindow(QMainWindow):
 
         total_referencia = max(self.total_sensores_config, len(self.base_sensores))
         sensores_apagados = total_referencia - (sensores_activos + sensores_inactivos)
+        total_conectados = sensores_activos + sensores_inactivos
 
         self.lbl_mensajes_recibidos.setText(f"Mensajes recibidos: {fmt_int(self.total_mensajes)}")
         self.lbl_throughput.setText(f"Throughput (Máx): {fmt_float(self.max_throughput, 1)} msgs/s")
         self.lbl_latencia.setText(f"Latencia promedio (Máx): {fmt_float(self.max_latencia, 1)} ms")
         self.lbl_sensores_totales.setText(f"Sensores configurados: {fmt_int(self.total_sensores_config)}")
+        self.lbl_conectados.setText(f"Sensores conectados: {fmt_int(total_conectados)}")
         self.lbl_activos.setText(f"Sensores activos (Verde): {fmt_int(sensores_activos)}")
         self.lbl_inactivos.setText(f"Sensores inactivos (Plomo): {fmt_int(sensores_inactivos)}")
-        self.lbl_apagados.setText(f"Sensores apagados: {fmt_int(max(0, sensores_apagados))}")
+        self.lbl_apagados.setText(f"Sensores desconectados: {fmt_int(max(0, sensores_apagados))}")
         
         if lons and lats:
             np_x = np.array(lons, dtype=float)
