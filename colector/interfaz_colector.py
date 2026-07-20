@@ -15,10 +15,7 @@ from PIL import Image
 LON_MIN, LON_MAX = -77.16, -76.96
 LAT_MIN, LAT_MAX = -12.15, -11.95
 
-# Ventana deslizante para throughput/latencia: en vez de promediar desde el
-# inicio del programa (lo que diluye cualquier cambio reciente), promediamos
-# solo los últimos N segundos. Así un cambio en el simulador se refleja en
-# pocos segundos, no en minutos.
+# Ventana deslizante para throughput/latencia
 VENTANA_METRICAS_SEG = 5.0
 
 
@@ -31,7 +28,6 @@ def fmt_float(f, decimals):
 
 
 class MqttWorker(QThread):
-
     batch_signal = pyqtSignal(list)
     connection_signal = pyqtSignal(bool)  # True = conectado, False = perdido/caído
 
@@ -39,9 +35,6 @@ class MqttWorker(QThread):
         super().__init__()
         self.buffer = []
         self.last_flush = time.time()
-        # CAMBIO: candado explícito para proteger self.buffer, que ahora se
-        # toca desde dos hilos (el de MQTT vía on_message, y el de la GUI
-        # vía purgar_cola_inmediata). Antes no había ninguna protección.
         self.lock = threading.Lock()
 
     def run(self):
@@ -49,10 +42,6 @@ class MqttWorker(QThread):
             self.connection_signal.emit(True)
 
         def on_disconnect(client, userdata, disconnect_flags, reason_code, properties=None):
-            # CAMBIO: antes no había ningún aviso visible si el broker se
-            # caía o se reiniciaba (p. ej. al aplicar un mosquitto.conf
-            # nuevo). El dashboard seguía mostrando el último throughput
-            # calculado, dando la falsa impresión de que "nada cambió".
             self.connection_signal.emit(False)
 
         def on_message(client, userdata, msg):
@@ -96,7 +85,7 @@ class MqttWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Monitoreo:")
+        self.setWindowTitle("Monitoreo Dinámico de Sensores")
         self.resize(1150, 800)
 
         main_layout = QHBoxLayout()
@@ -134,7 +123,8 @@ class MainWindow(QMainWindow):
         self.lbl_sensores_totales = QLabel("Sensores configurados: 0")
         self.lbl_activos = QLabel("Sensores activos: 0")
         self.lbl_inactivos = QLabel("Sensores inactivos: 0")
-        for lbl in (self.lbl_sensores_totales, self.lbl_activos, self.lbl_inactivos):
+        self.lbl_apagados = QLabel("Sensores apagados: 0") # Nueva etiqueta para sensores desconectados / apagados
+        for lbl in (self.lbl_sensores_totales, self.lbl_activos, self.lbl_inactivos, self.lbl_apagados):
             lbl.setStyleSheet(estilo_label)
             layout_metricas.addWidget(lbl)
 
@@ -159,7 +149,7 @@ class MainWindow(QMainWindow):
 
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('k')
-        self.plot_widget.setTitle("Distribución de Sensores", color="w", size="12pt")
+        self.plot_widget.setTitle("Distribución Dinámica de Sensores", color="w", size="12pt")
 
         if os.path.exists("mapa_lima.png"):
             img = Image.open("mapa_lima.png").convert("RGBA")
@@ -173,7 +163,7 @@ class MainWindow(QMainWindow):
         self.plot_widget.setXRange(LON_MIN, LON_MAX)
         self.plot_widget.setYRange(LAT_MIN, LAT_MAX)
 
-        self.scatter = pg.ScatterPlotItem(size=4, symbol='s', pen=None)
+        self.scatter = pg.ScatterPlotItem(size=3, symbol='s', pen=None)
         self.plot_widget.addItem(self.scatter)
         main_layout.addWidget(self.plot_widget, stretch=3)
 
@@ -181,8 +171,9 @@ class MainWindow(QMainWindow):
         container.setLayout(main_layout)
         self.setCentralWidget(container)
 
-        self.tiempo_vida_verde = 2.0
-        self.tiempo_vida_gris = 5.0
+        # Configuración de tiempos según los requerimientos
+        self.tiempo_verde = 2.0  # Activo durante 2 segundos
+        self.tiempo_plomo = 5.0  # Cambia a inactivo los siguientes 3 segundos (2s + 3s = 5s)
 
         self.inicializar_variables_sistema()
         self.worker = MqttWorker()
@@ -190,9 +181,10 @@ class MainWindow(QMainWindow):
         self.worker.connection_signal.connect(self.actualizar_estado_conexion)
         self.worker.start()
 
+        # El temporizador refresca cada 100ms para que la transición de colores sea fluida y en tiempo real
         self.timer = QTimer()
         self.timer.timeout.connect(self.actualizar_interfaz)
-        self.timer.start(1000)
+        self.timer.start(100)
 
     def inicializar_variables_sistema(self):
         self.total_mensajes = 0
@@ -201,21 +193,12 @@ class MainWindow(QMainWindow):
         self.base_sensores = {}
         self.total_sensores_config = 0
 
-        # VARIABLES CORREGIDAS: Almacenes estables para registrar los picos históricos
         self.max_throughput = 0.0
         self.max_latencia = 0.0
         self.max_cpu = 0.0
         self.max_memoria = 0.0
 
-        # CAMBIO: eventos con marca de tiempo para calcular throughput/latencia
-        # sobre una ventana deslizante (últimos VENTANA_METRICAS_SEG segundos)
-        # en vez de un promedio acumulado desde el arranque del dashboard.
-        self.eventos_recientes = []  # lista de (timestamp_llegada, latencia_ms)
-
-        # CAMBIO: conteo de mensajes recibidos por número de ráfaga, para
-        # comparar contra "total_envio" (el total esperado que ya viaja en
-        # el payload) y calcular una tasa de pérdida real, no solo un
-        # contador de mensajes recibidos sin punto de referencia.
+        self.eventos_recientes = []
         self.mensajes_por_rafaga = {}
         self.ultima_rafaga_reportada = None
         self.rafaga_actual = 0
@@ -240,12 +223,12 @@ class MainWindow(QMainWindow):
         self.lbl_mensajes_recibidos.setText("Mensajes recibidos: 0")
         self.lbl_throughput.setText("Throughput (Máx): 0.0 msgs/s")
         self.lbl_latencia.setText("Latencia promedio (Máx): 0.0 ms")
-        self.lbl_perdida.setText("Pérdida: N/D")
         self.lbl_cpu.setText("CPU Colector (Máx): 0.0 %")
         self.lbl_memoria.setText("Memoria Colector (Máx): 0.0 %")
         self.lbl_sensores_totales.setText("Sensores configurados: 0")
         self.lbl_activos.setText("Sensores activos: 0")
         self.lbl_inactivos.setText("Sensores inactivos: 0")
+        self.lbl_apagados.setText("Sensores apagados: 0")
         self.lbl_rafaga.setText("Ráfaga #0 (—)")
         self.lbl_total_esperado.setText("Total esperado: 0")
         self.lbl_perdida.setText("Pérdida global: N/D")
@@ -284,7 +267,6 @@ class MainWindow(QMainWindow):
                 self.eventos_recientes.append((ahora, latencia))
 
                 rafaga = data.get("rafaga")
-                sensor_id = data.get("sensor_id")
                 if rafaga is not None and sensor_id is not None:
                     self.mensajes_por_rafaga.setdefault(rafaga, set()).add(sensor_id)
 
@@ -312,7 +294,7 @@ class MainWindow(QMainWindow):
         if actualizaciones_locales:
             self.base_sensores.update(actualizaciones_locales)
 
-        # Poda de eventos y ráfagas viejas para no acumular memoria indefinidamente.
+        # Poda preventiva de memoria
         limite = ahora - max(VENTANA_METRICAS_SEG * 4, 20.0)
         self.eventos_recientes = [e for e in self.eventos_recientes if e[0] >= limite]
         if len(self.mensajes_por_rafaga) > 50:
@@ -327,7 +309,7 @@ class MainWindow(QMainWindow):
     def actualizar_interfaz(self):
         ahora = time.time()
 
-        # CORRECCIÓN: Medir valores actuales y retener únicamente los máximos
+        # Monitor de hardware (picos máximos)
         cpu_actual = psutil.cpu_percent()
         memoria_actual = psutil.virtual_memory().percent
         self.max_cpu = max(self.max_cpu, cpu_actual)
@@ -339,6 +321,7 @@ class MainWindow(QMainWindow):
         if self.tiempo_inicio is None:
             return
 
+        # Métricas de Throughput y Latencia
         limite_ventana = ahora - VENTANA_METRICAS_SEG
         eventos_ventana = [e for e in self.eventos_recientes if e[0] >= limite_ventana]
 
@@ -350,20 +333,17 @@ class MainWindow(QMainWindow):
         latencias_ventana = [lat for (_, lat) in eventos_ventana if lat is not None]
         latencia_actual = np.mean(latencias_ventana) if latencias_ventana else 0.0
 
-        # CORRECCIÓN: Filtrado y actualización del pico más alto para Throughput y Latencia
         self.max_throughput = max(self.max_throughput, throughput_actual)
         self.max_latencia = max(self.max_latencia, latencia_actual)
 
+        # Gestión de Ráfagas
         claves = sorted(self.mensajes_por_rafaga.keys())
-
-        # Ráfaga en progreso
         if claves:
             actual = claves[-1]
             recibidos_actual = len(self.mensajes_por_rafaga[actual])
             estado = "completado" if recibidos_actual >= self.total_sensores_config else "recibiendo..."
             self.lbl_rafaga.setText(f"Ráfaga #{actual} ({estado})")
 
-        # Pérdida global: (total_esperado - total_recibido) / total_esperado * 100
         if self.rafaga_actual > 0 and self.total_sensores_config > 0:
             total_esperado = self.rafaga_actual * self.total_sensores_config
             self.lbl_total_esperado.setText(f"Total esperado: {fmt_int(total_esperado)}")
@@ -374,39 +354,48 @@ class MainWindow(QMainWindow):
             else:
                 self.lbl_perdida.setText("Pérdida global: 0.0 %")
 
+        # ── LÓGICA DINÁMICA DE LOS ESTADOS DEL SENSOR ──
         sensores_activos = 0
-        sensores_conectados = 0
+        sensores_inactivos = 0
+        
         lons, lats, colores = [], [], []
 
         for s_id, info in list(self.base_sensores.items()):
             tiempo_transcurrido = ahora - info["last_seen"]
 
-            if tiempo_transcurrido < self.tiempo_vida_verde:
+            if tiempo_transcurrido <= self.tiempo_verde:
+                # 1. Verde (Activo durante los primeros 2 segundos)
                 sensores_activos += 1
-                sensores_conectados += 1
                 lon_val, lat_val = info["pos"]
                 lons.append(lon_val)
                 lats.append(lat_val)
-                colores.append((0, 255, 0, 255))
+                colores.append((0, 255, 0, 255)) # Verde opaco completo
 
-            elif tiempo_transcurrido < self.tiempo_vida_gris:
-                sensores_conectados += 1
+            elif tiempo_transcurrido <= self.tiempo_plomo:
+                # 2. Plomo/Gris (Inactivo durante los siguientes 3 segundos)
+                sensores_inactivos += 1
                 lon_val, lat_val = info["pos"]
                 lons.append(lon_val)
                 lats.append(lat_val)
-                colores.append((168, 168, 168, 140))
+                colores.append((128, 128, 128, 255)) # Gris/Plomo nítido
 
+            # 3. Si tiempo_transcurrido > 5.0, no entra en los bloques anteriores:
+            # NO se agregan coordenadas a lons/lats, eliminándolo eficazmente del mapa dinámico.
+
+        # Calcular los sensores apagados/desconectados en base al total que espera la red simulada
         total_referencia = max(self.total_sensores_config, len(self.base_sensores))
-        sensores_desconectados = total_referencia - sensores_conectados
+        sensores_apagados = total_referencia - (sensores_activos + sensores_inactivos)
 
-        # Pintar datos estables en la interfaz utilizando las variables de picos (max_*)
+        # Actualización de etiquetas de texto en tiempo real
         self.lbl_mensajes_recibidos.setText(f"Mensajes recibidos: {fmt_int(self.total_mensajes)}")
         self.lbl_throughput.setText(f"Throughput (Máx): {fmt_float(self.max_throughput, 1)} msgs/s")
         self.lbl_latencia.setText(f"Latencia promedio (Máx): {fmt_float(self.max_latencia, 1)} ms")
         self.lbl_sensores_totales.setText(f"Sensores configurados: {fmt_int(self.total_sensores_config)}")
-        self.lbl_activos.setText(f"Sensores activos: {fmt_int(sensores_activos)}")
-        self.lbl_inactivos.setText(f"Sensores inactivos: {fmt_int(sensores_desconectados)}")
+        self.lbl_activos.setText(f"Sensores activos (Verde): {fmt_int(sensores_activos)}")
+        self.lbl_inactivos.setText(f"Sensores inactivos (Plomo): {fmt_int(sensores_inactivos)}")
+        self.lbl_apagados.setText(f"Sensores apagados: {fmt_int(max(0, sensores_apagados))}")
 
+        # Renderizar la capa de dispersión en pyqtgraph
         if lons and lats:
             np_x = np.array(lons, dtype=float)
             np_y = np.array(lats, dtype=float)
