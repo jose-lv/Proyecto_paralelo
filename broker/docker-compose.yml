@@ -1,6 +1,3 @@
-#listener 1883
-#allow_anonymous true
-
 services:
   mosquitto:
     image: eclipse-mosquitto:2.0

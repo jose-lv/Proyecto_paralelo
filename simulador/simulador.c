@@ -54,18 +54,18 @@ int main(int argc, char* argv[]) {
     // Contador de mensajes fallidos, compartido por todos los hilos del proceso.
     // Se actualiza con #pragma omp atomic, así que no necesita mutex explícito.
     long mensajes_fallidos_proceso = 0;
-    int nro_rafaga = 1; // Compartido: solo lo toca el hilo master, protegido por la barrera.
+    int nro_rafaga = 1; // solo lo toca el hilo master
 
     // OMP: Inicia la región paralela. Cada proceso MPI bifurca su ejecución en 'hilos_openmp' hilos
     #pragma omp parallel
     {
-        // Cada hilo obtiene su ID dentro del proceso actual (0 a hilos_openmp-1)
+        // Cada hilo obtiene su ID
         int hilo_id = omp_get_thread_num();
 
-        // Semilla local por hilo: rand_r es thread-safe y asegura secuencias aleatorias independientes por hilo
+        // Semilla local por hilo, rand_r es thread-safe y asegura secuencias aleatorias independientes por hilo
         unsigned int semilla_hilo = (unsigned int)(time(NULL) + rank_id + hilo_id);
 
-        // Configuración de cliente MQTT: cada hilo actúa como un sensor independiente
+        // Configuración de cliente MQTT: cada hilo posee su propia conexión MQTT
         MQTTClient client;
         MQTTClient_connectOptions conn_opts = MQTTClient_connectOptions_initializer;
         char clientId_hilo[60];
@@ -78,7 +78,7 @@ int main(int argc, char* argv[]) {
 
         int conectado = (MQTTClient_connect(client, &conn_opts) == MQTTCLIENT_SUCCESS);
         if (!conectado) {
-            // Antes: si fallaba la conexión, el hilo quedaba mudo sin avisar a nadie.
+            // Avisa si fallaba la conexión
             fprintf(stderr, "[Proceso %d - Hilo %d] ERROR: no se pudo conectar al broker MQTT.\n", rank_id, hilo_id);
         }
 
@@ -93,13 +93,7 @@ int main(int argc, char* argv[]) {
             }
             // Barrera: nadie empieza a publicar hasta que t_inicio_envio esté fijado.
             #pragma omp barrier
-
-            // CAMBIO CLAVE: se quitó "nowait". #pragma omp for trae una barrera implícita
-            // al final, así que TODOS los hilos del proceso terminan su rango de sensores
-            // antes de que cualquiera pueda seguir de largo hacia la siguiente ráfaga.
-            // Con "nowait" un hilo rápido podía re-entrar al `for` de la ráfaga N+1 mientras
-            // otros hilos del mismo equipo seguían en la ráfaga N: eso rompe la construcción
-            // de reparto de trabajo de OpenMP y produce publicaciones perdidas/mezcladas.
+            
             #pragma omp for
             for (int i = inicio_sensor; i <= fin_sensor; i++) {
                 // Generación de datos con rand_r
@@ -123,20 +117,14 @@ int main(int argc, char* argv[]) {
                 MQTTClient_deliveryToken token;
                 int rc = MQTTClient_publishMessage(client, TOPIC, &pubmsg, &token);
 
-                // CAMBIO: antes no se revisaba el retorno; con QoS 0 no hay ACK, pero
-                // MQTTClient_publishMessage sí puede fallar localmente (p. ej. buffer lleno,
-                // socket caído). Ahora lo contamos de forma thread-safe.
+                // MQTTClient_publishMessage puede fallar localmente, lo contamos de forma thread-safe.
                 if (rc != MQTTCLIENT_SUCCESS) {
                     #pragma omp atomic
                     mensajes_fallidos_proceso++;
                 }
             }
             // <- Barrera implícita del "#pragma omp for" de arriba: todos llegan aquí
-            //    antes de que el master siga.
-
-            // CAMBIO CLAVE: antes, TODOS los hilos de TODOS los procesos llamaban a
-            // MPI_Reduce, lo cual es un uso frágil e ineficiente de una operación colectiva.
-            // Ahora solo el hilo master de cada proceso participa en el Reduce.
+            
             #pragma omp master
             {
                 double t_fin_envio_local = MPI_Wtime();
@@ -162,9 +150,7 @@ int main(int argc, char* argv[]) {
                     usleep((useconds_t)(tiempo_restante * 1000000.0));
                 }
             }
-            // CAMBIO: "omp master" NO trae barrera implícita al final. Sin este barrier,
-            // los hilos que no son master podrían adelantarse a la siguiente ráfaga mientras
-            // el master todavía está calculando el reduce o durmiendo el intervalo restante.
+            
             #pragma omp barrier
         }
 
